@@ -9,3 +9,18 @@ aws_region = "us-east-1"
 # The issuer is: https://[your-instance].clerk.accounts.dev
 clerk_jwks_url = "https://engaging-feline-80.clerk.accounts.dev/.well-known/jwks.json"
 clerk_issuer   = "https://engaging-feline-80.clerk.accounts.dev"
+
+# Aurora database configuration from Part 5
+# Previously read via terraform_remote_state, but dir 5 uses local backend
+# (manual lifecycle to avoid accidental data loss), so these are passed explicitly.
+# Get values from: cd terraform/5_database && terraform output
+aurora_cluster_arn   = "arn:aws:rds:eu-west-1:123456789012:cluster:alex-aurora-cluster"
+aurora_secret_arn    = "arn:aws:secretsmanager:eu-west-1:123456789012:secret:alex-aurora-credentials-xxxxx"
+aurora_database_name = "alex"
+
+# SQS queue configuration from Part 6
+# Previously read via terraform_remote_state for dir 6. Now passed explicitly
+# for consistency with the dir 5 approach above.
+# Get values from: cd terraform/6_agents && terraform output
+sqs_queue_arn = "arn:aws:sqs:eu-west-1:123456789012:alex-analysis-jobs"
+sqs_queue_url = "https://sqs.eu-west-1.amazonaws.com/123456789012/alex-analysis-jobs"

@@ -23,7 +23,9 @@ load_dotenv(override=True)
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Get configuration - Tagger uses lite model (structured classification, no complex reasoning)
+# Get configuration - Tagger uses lite model: it classifies instruments into
+# categories (structured output), not complex reasoning. Falls back to
+# BEDROCK_MODEL_ID if BEDROCK_LITE_MODEL_ID is not set.
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_LITE_MODEL_ID", os.getenv("BEDROCK_MODEL_ID", "eu.amazon.nova-pro-v1:0"))
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", "eu-west-1")
 

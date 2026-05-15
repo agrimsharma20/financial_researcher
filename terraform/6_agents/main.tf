@@ -8,8 +8,16 @@ terraform {
     }
   }
   
-  # Using local backend - state will be stored in terraform.tfstate in this directory
-  # This is automatically gitignored for security
+  # Remote S3 backend for shared state (migrated from local).
+  # Enables CI/CD (GitHub Actions) and team collaboration.
+  # State bucket + lock table created by terraform/0_bootstrap.
+  backend "s3" {
+    bucket         = "alex-tfstate-064102991378"
+    key            = "6_agents/terraform.tfstate"
+    region         = "eu-west-1"
+    dynamodb_table = "alex-tfstate-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -241,6 +249,9 @@ resource "aws_lambda_function" "planner" {
       DATABASE_NAME       = "alex"
       VECTOR_BUCKET       = var.vector_bucket
       BEDROCK_MODEL_ID    = var.bedrock_model_id
+      # Lite model for cost optimization: tagger, charter, and planner use a cheaper model
+      # since they do structured output / dispatch, not complex reasoning.
+      # Falls back to bedrock_model_id if not configured separately.
       BEDROCK_LITE_MODEL_ID = var.bedrock_lite_model_id != "" ? var.bedrock_lite_model_id : var.bedrock_model_id
       BEDROCK_REGION      = var.bedrock_region
       DEFAULT_AWS_REGION  = var.aws_region
@@ -292,6 +303,7 @@ resource "aws_lambda_function" "tagger" {
       AURORA_SECRET_ARN     = var.aurora_secret_arn
       DATABASE_NAME         = "alex"
       BEDROCK_MODEL_ID      = var.bedrock_model_id
+      # Lite model for cost optimization (see planner env vars for full comment)
       BEDROCK_LITE_MODEL_ID = var.bedrock_lite_model_id != "" ? var.bedrock_lite_model_id : var.bedrock_model_id
       BEDROCK_REGION        = var.bedrock_region
       DEFAULT_AWS_REGION    = var.aws_region
@@ -374,6 +386,7 @@ resource "aws_lambda_function" "charter" {
       AURORA_SECRET_ARN     = var.aurora_secret_arn
       DATABASE_NAME         = "alex"
       BEDROCK_MODEL_ID      = var.bedrock_model_id
+      # Lite model for cost optimization (see planner env vars for full comment)
       BEDROCK_LITE_MODEL_ID = var.bedrock_lite_model_id != "" ? var.bedrock_lite_model_id : var.bedrock_model_id
       BEDROCK_REGION        = var.bedrock_region
       DEFAULT_AWS_REGION    = var.aws_region

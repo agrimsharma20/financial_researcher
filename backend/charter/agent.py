@@ -140,7 +140,9 @@ def analyze_portfolio(portfolio_data: Dict[str, Any]) -> str:
 def create_agent(job_id: str, portfolio_data: Dict[str, Any], db=None):
     """Create the charter agent without tools - will output JSON directly."""
     
-    # Charter uses lite model (JSON generation, no complex reasoning)
+    # Charter uses lite model: it generates structured JSON chart specs, not complex reasoning.
+    # Falls back to BEDROCK_MODEL_ID if BEDROCK_LITE_MODEL_ID is not set, allowing
+    # cost optimization with a cheaper model for lightweight agents.
     model_id = os.getenv("BEDROCK_LITE_MODEL_ID", os.getenv("BEDROCK_MODEL_ID", "eu.amazon.nova-pro-v1:0"))
     # Set region for LiteLLM Bedrock calls
     bedrock_region = os.getenv("BEDROCK_REGION", "eu-west-1")

@@ -1,0 +1,235 @@
+# ============================================================================
+# Alex CI/CD Pipeline
+# ============================================================================
+# Deploys all Alex infrastructure and application code on push to main.
+#
+# Architecture:
+#   1. deploy-infrastructure: Applies terraform for dirs 2,3,4,6,7,8 in order.
+#      Dir 5 (Aurora database) is excluded — its lifecycle is managed manually
+#      via terraform/initialize.py and terraform/teardown.py to avoid
+#      accidental data loss and unnecessary costs ($50+/month).
+#
+#   2. deploy-frontend: Builds the Next.js static site with Clerk auth
+#      env vars and syncs to S3, then invalidates CloudFront cache.
+#
+#   3. deploy-researcher: Builds the researcher Docker image and pushes
+#      to ECR for App Runner to pick up.
+#
+# Required GitHub Secrets:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, AWS_ACCOUNT_ID
+#   TFVARS_2_SAGEMAKER .. TFVARS_8_ENTERPRISE (full terraform.tfvars content)
+#   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY, NEXT_PUBLIC_API_URL
+#   S3_FRONTEND_BUCKET, CLOUDFRONT_DISTRIBUTION_ID
+#
+# Prerequisites:
+#   - terraform/0_bootstrap applied (creates S3 state bucket + DynamoDB lock)
+#   - Existing state migrated: `terraform init -migrate-state` in each dir
+#   - Dir 5 (database) applied manually and migrations/seeds run
+# ============================================================================
+
+name: Deploy Alex
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  # ─── Terraform: SageMaker, Ingestion, Researcher, Agents, Frontend, Enterprise ───
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Write terraform.tfvars files
+        # Each TFVARS secret contains the full terraform.tfvars content for that directory.
+        # This avoids managing dozens of individual variable secrets.
+        # To populate: copy your local terraform.tfvars content into each GitHub secret.
+        shell: bash
+        run: |
+          echo '${{ secrets.TFVARS_2_SAGEMAKER }}' > terraform/2_sagemaker/terraform.tfvars
+          echo '${{ secrets.TFVARS_3_INGESTION }}' > terraform/3_ingestion/terraform.tfvars
+          echo '${{ secrets.TFVARS_4_RESEARCHER }}' > terraform/4_researcher/terraform.tfvars
+          echo '${{ secrets.TFVARS_6_AGENTS }}' > terraform/6_agents/terraform.tfvars
+          echo '${{ secrets.TFVARS_7_FRONTEND }}' > terraform/7_frontend/terraform.tfvars
+          echo '${{ secrets.TFVARS_8_ENTERPRISE }}' > terraform/8_enterprise/terraform.tfvars
+        env:
+          # Prevents shell from echoing the expanded secret in trace mode
+          BASH_ENV: /dev/null
+
+      - name: Package all Lambda agents
+        # Package all Lambda zips before any terraform apply.
+        # This guarantees fresh artifacts are available when 6_agents uploads to S3.
+        run: |
+          cd backend
+          uv run package_docker.py
+          echo "✅ Agent Lambdas packaged"
+
+      - name: Package API and Ingest Lambdas
+        run: |
+          cd backend/api
+          uv run package_docker.py
+          echo "✅ API Lambda packaged"
+
+          cd ../ingest
+          uv run package.py
+          echo "✅ Ingest Lambda packaged"
+
+      - name: Terraform Init & Apply - 2_sagemaker
+        run: |
+          cd terraform/2_sagemaker
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 2_sagemaker applied'
+
+      - name: Terraform Init & Apply - 3_ingestion
+        run: |
+          cd terraform/3_ingestion
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 3_ingestion applied'
+
+      - name: Terraform Init & Apply - 4_researcher
+        run: |
+          cd terraform/4_researcher
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 4_researcher applied'
+
+      - name: Terraform Init & Apply - 6_agents
+        run: |
+          cd terraform/6_agents
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 6_agents applied'
+
+      - name: Terraform Init & Apply - 7_frontend
+        run: |
+          cd terraform/7_frontend
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 7_frontend applied'
+
+      - name: Terraform Init & Apply - 8_enterprise
+        run: |
+          cd terraform/8_enterprise
+          terraform init -no-color > /dev/null 2>&1
+          terraform apply -auto-approve -no-color >> /tmp/tf_output.log 2>&1 || { echo '❌ Terraform apply failed (output suppressed for security)'; exit 1; }
+          echo '✅ 8_enterprise applied'
+
+      # Upload terraform logs as a private artifact on failure.
+      # Only repo admins can download artifacts — they are NOT visible in public logs.
+      - name: Upload terraform debug logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-logs
+          path: /tmp/tf_output.log
+          retention-days: 3
+
+  # ─── Build and deploy frontend ───
+  # Runs after infrastructure completes.
+  deploy-frontend:
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Write frontend env file
+        # .env.production.local is used by Next.js during `npm run build`.
+        # These values get baked into the static export at build time.
+        shell: bash
+        run: |
+          cat > frontend/.env.production.local << 'EOF'
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
+          NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+          EOF
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync frontend/out/ "s3://${{ secrets.S3_FRONTEND_BUCKET }}/" --delete > /dev/null 2>&1
+          echo '✅ Frontend deployed to S3'
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths "/*" \
+            --no-cli-pager > /dev/null 2>&1
+          echo '✅ CloudFront cache invalidated'
+
+  # ─── Build and deploy researcher container ───
+  # The researcher runs on App Runner, which auto-deploys from the :latest ECR image.
+  deploy-researcher:
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push researcher image
+        run: |
+          ECR_REPO="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/alex-researcher"
+          cd backend/researcher
+          docker build -t alex-researcher . > /dev/null 2>&1
+          docker tag alex-researcher:latest "${ECR_REPO}:latest"
+          docker push "${ECR_REPO}:latest" > /dev/null 2>&1
+          echo "✅ Researcher image pushed to ECR"

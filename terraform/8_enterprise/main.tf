@@ -8,6 +8,17 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # Remote S3 backend for shared state (migrated from local).
+  # Enables CI/CD (GitHub Actions) and team collaboration.
+  # State bucket + lock table created by terraform/0_bootstrap.
+  backend "s3" {
+    bucket         = "alex-tfstate-064102991378"
+    key            = "8_enterprise/terraform.tfstate"
+    region         = "eu-west-1"
+    dynamodb_table = "alex-tfstate-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {

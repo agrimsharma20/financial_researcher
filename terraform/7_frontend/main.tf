@@ -8,6 +8,17 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  # Remote S3 backend for shared state (migrated from local).
+  # Enables CI/CD (GitHub Actions) and team collaboration.
+  # State bucket + lock table created by terraform/0_bootstrap.
+  backend "s3" {
+    bucket         = "alex-tfstate-064102991378"
+    key            = "7_frontend/terraform.tfstate"
+    region         = "eu-west-1"
+    dynamodb_table = "alex-tfstate-lock"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
@@ -19,21 +30,10 @@ data "aws_caller_identity" "current" {}
 
 data "aws_region" "current" {}
 
-# Reference Part 5 Database resources
-data "terraform_remote_state" "database" {
-  backend = "local"
-  config = {
-    path = "../5_database/terraform.tfstate"
-  }
-}
-
-# Reference Part 6 Agents resources
-data "terraform_remote_state" "agents" {
-  backend = "local"
-  config = {
-    path = "../6_agents/terraform.tfstate"
-  }
-}
+# Database and agent values passed as explicit variables instead of terraform_remote_state.
+# Reason: dir 5 (database) keeps local state for manual lifecycle control, so
+# terraform_remote_state can't read it in CI/CD. We pass these values via
+# terraform.tfvars instead (populated from `terraform output` in dirs 5 and 6).
 
 locals {
   name_prefix = "alex"
@@ -133,14 +133,14 @@ resource "aws_iam_role_policy" "api_lambda_aurora" {
           "rds-data:CommitTransaction",
           "rds-data:RollbackTransaction"
         ]
-        Resource = data.terraform_remote_state.database.outputs.aurora_cluster_arn
+        Resource = var.aurora_cluster_arn
       },
       {
         Effect = "Allow"
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = data.terraform_remote_state.database.outputs.aurora_secret_arn
+        Resource = var.aurora_secret_arn
       }
     ]
   })
@@ -160,7 +160,7 @@ resource "aws_iam_role_policy" "api_lambda_sqs" {
           "sqs:SendMessage",
           "sqs:GetQueueAttributes"
         ]
-        Resource = data.terraform_remote_state.agents.outputs.sqs_queue_arn
+        Resource = var.sqs_queue_arn
       }
     ]
   })
@@ -205,13 +205,13 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       # Database configuration from Part 5
-      AURORA_CLUSTER_ARN = data.terraform_remote_state.database.outputs.aurora_cluster_arn
-      AURORA_SECRET_ARN  = data.terraform_remote_state.database.outputs.aurora_secret_arn
-      AURORA_DATABASE    = data.terraform_remote_state.database.outputs.database_name
+      AURORA_CLUSTER_ARN = var.aurora_cluster_arn
+      AURORA_SECRET_ARN  = var.aurora_secret_arn
+      AURORA_DATABASE    = var.aurora_database_name
       DEFAULT_AWS_REGION = var.aws_region
 
       # SQS configuration from Part 6
-      SQS_QUEUE_URL = data.terraform_remote_state.agents.outputs.sqs_queue_url
+      SQS_QUEUE_URL = var.sqs_queue_url
 
       # Clerk configuration for JWT validation
       CLERK_JWKS_URL = var.clerk_jwks_url
