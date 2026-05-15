@@ -68,12 +68,29 @@ jobs:
         # To populate: copy your local terraform.tfvars content into each GitHub secret.
         shell: bash
         run: |
-          echo '${{ secrets.TFVARS_2_SAGEMAKER }}' > terraform/2_sagemaker/terraform.tfvars
-          echo '${{ secrets.TFVARS_3_INGESTION }}' > terraform/3_ingestion/terraform.tfvars
-          echo '${{ secrets.TFVARS_4_RESEARCHER }}' > terraform/4_researcher/terraform.tfvars
-          echo '${{ secrets.TFVARS_6_AGENTS }}' > terraform/6_agents/terraform.tfvars
-          echo '${{ secrets.TFVARS_7_FRONTEND }}' > terraform/7_frontend/terraform.tfvars
-          echo '${{ secrets.TFVARS_8_ENTERPRISE }}' > terraform/8_enterprise/terraform.tfvars
+          cat > terraform/2_sagemaker/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_2_SAGEMAKER }}
+          EOF
+
+          cat > terraform/3_ingestion/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_3_INGESTION }}
+          EOF
+
+          cat > terraform/4_researcher/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_4_RESEARCHER }}
+          EOF
+
+          cat > terraform/6_agents/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_6_AGENTS }}
+          EOF
+
+          cat > terraform/7_frontend/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_7_FRONTEND }}
+          EOF
+
+          cat > terraform/8_enterprise/terraform.tfvars << 'EOF'
+          ${{ secrets.TFVARS_8_ENTERPRISE }}
+          EOF
         env:
           # Prevents shell from echoing the expanded secret in trace mode
           BASH_ENV: /dev/null
