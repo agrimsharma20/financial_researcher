@@ -39,6 +39,22 @@ def run_packaging(agent_name):
                 print(f"  ⚠️  Warning: No zip file found after packaging")
                 return True
         else:
+            # Some CI environments produce cleanup PermissionError after the zip is created.
+            # If the artifact exists and stdout confirms creation, treat as success.
+            zip_files = list(agent_dir.glob("*.zip"))
+            cleanup_permission_error = (
+                "TemporaryDirectory" in result.stderr
+                and "PermissionError" in result.stderr
+                and "Operation not permitted" in result.stderr
+            )
+            if zip_files and "Package created:" in result.stdout and cleanup_permission_error:
+                zip_file = zip_files[0]
+                size_mb = zip_file.stat().st_size / (1024 * 1024)
+                print(
+                    f"  ⚠️  Packaging exited non-zero due to temp cleanup, but artifact exists: {zip_file.name} ({size_mb:.1f} MB)"
+                )
+                return True
+
             print(
                 f"  ❌ Error with {agent_name.upper()}:\nPlease note that warnings about uv environment can be ignored:\n{result.stderr}\nOutput from script is:\n{result.stdout}"
             )

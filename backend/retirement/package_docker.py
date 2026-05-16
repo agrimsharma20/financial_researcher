@@ -57,10 +57,16 @@ def package_lambda():
         req_file = temp_path / "requirements.txt"
         req_file.write_text("\n".join(filtered_requirements))
         
-        # Use Docker to install dependencies for Lambda's architecture
+        # Use Docker to install dependencies for Lambda's architecture.
+        # On CI, run as the current user so mounted files are not root-owned.
+        docker_user_args = []
+        if hasattr(os, "getuid") and hasattr(os, "getgid"):
+            docker_user_args = ["--user", f"{os.getuid()}:{os.getgid()}"]
+
         docker_cmd = [
             "docker", "run", "--rm",
             "--platform", "linux/amd64",
+            *docker_user_args,
             "-v", f"{temp_path}:/build",
             "-v", f"{backend_dir}/database:/database",
             "--entrypoint", "/bin/bash",
