@@ -150,7 +150,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="px-8 py-6 bg-gray-900 text-gray-400 text-center text-sm">
-        <p>© 2025 Alex AI Financial Advisor. All rights reserved.</p>
+        <p>© 2026 Alex AI Financial Advisor. All rights reserved.</p>
         <p className="mt-2">
           This AI-generated advice has not been vetted by a qualified financial advisor and should not be used for trading decisions. 
           For informational purposes only.
