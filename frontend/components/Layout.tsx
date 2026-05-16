@@ -157,7 +157,7 @@ export default function Layout({ children }: LayoutProps) {
             </div>
             <div className="mt-4 pt-4 border-t border-gray-200">
               <p className="text-xs text-gray-500 text-center">
-                © 2025 Alex AI Financial Advisor. Powered by AI agents and built with care.
+                © 2026 Alex AI Financial Advisor. Powered by AI agents and built with care.
               </p>
             </div>
           </div>
