@@ -29,7 +29,9 @@ def package_lambda():
     backend_dir = retirement_dir.parent
     
     # Create a temporary directory for packaging
-    with tempfile.TemporaryDirectory() as temp_dir:
+    # Docker can create root-owned files in the mounted temp directory on CI.
+    # Ignore cleanup permission errors once packaging is complete.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         temp_path = Path(temp_dir)
         package_dir = temp_path / "package"
         package_dir.mkdir()
